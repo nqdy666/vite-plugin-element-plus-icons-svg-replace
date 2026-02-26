@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowDown, ArrowUp, ArrowDownBold, ArrowUpBold, Search } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowDownBold, ArrowUp, ArrowUpBold, Search } from '@element-plus/icons-vue'
 </script>
 
 <template>
