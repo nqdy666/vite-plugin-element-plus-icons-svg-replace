@@ -1,0 +1,52 @@
+{
+  "name": "vite-plugin-element-plus-icons-svg-replace",
+  "type": "module",
+  "version": "1.0.0",
+  "description": "Replace Element Plus Icons SVG with custom SVG",
+  "author": "nianqin",
+  "license": "MIT",
+  "homepage": "https://github.com/nqdy666/vite-plugin-element-plus-icons-svg-replace",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nqdy666/vite-plugin-element-plus-icons-svg-replace"
+  },
+  "keywords": [
+    "vite-plugin",
+    "element-plus",
+    "icons"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --dts --format cjs,esm",
+    "dev": "nr build --watch",
+    "lint": "eslint .",
+    "prepublishOnly": "nr build",
+    "release": "bumpp && npm publish"
+  },
+  "peerDependencies": {
+    "vite": "^6.0.0"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^3.10.0",
+    "@antfu/ni": "^0.23.1",
+    "@types/node": "^22.10.0",
+    "bumpp": "^9.8.1",
+    "eslint": "^9.15.0",
+    "rollup": "^4.27.4",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.1"
+  }
+}
