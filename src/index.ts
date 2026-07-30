@@ -159,20 +159,31 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
       }
 
       newCode = newCode.replace(importRegex, (match, group1) => {
-        const names = (group1 || '').split(',').map(s => s.trim()).filter(Boolean)
-        const replaced = names.filter(n => replacementNames.includes(n))
-        const remaining = names.filter(n => !replacementNames.includes(n))
+        const rawNames = (group1 || '').split(',').map(s => s.trim()).filter(Boolean)
+        const parsed = rawNames.map((n) => {
+          const parts = n.split(/\s+as\s+/)
+          return { baseName: parts[0].trim(), alias: (parts[1] || parts[0]).trim() }
+        })
+        const replaced = parsed.filter(p => replacementNames.includes(p.baseName))
+        const remaining = parsed.filter(p => !replacementNames.includes(p.baseName))
 
         const lines: string[] = []
         if (remaining.length > 0) {
-          lines.push(`import { ${remaining.join(', ')} } from '@element-plus/icons-vue'`)
+          const remainingStr = remaining
+            .map(p => p.baseName === p.alias ? p.baseName : `${p.baseName} as ${p.alias}`)
+            .join(', ')
+          lines.push(`import { ${remainingStr} } from '@element-plus/icons-vue'`)
         }
-        replaced.forEach((n) => {
-          lines.push(`import ${n} from 'virtual:ep-icons-replace/${n}'`)
+        replaced.forEach((p) => {
+          lines.push(`import ${p.alias} from 'virtual:ep-icons-replace/${p.baseName}'`)
         })
 
         return lines.join('\n')
       })
+
+      if (newCode === code) {
+        return null
+      }
 
       return { code: newCode }
     },
