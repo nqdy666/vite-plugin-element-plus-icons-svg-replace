@@ -203,11 +203,13 @@ function createEsbuildReplacePlugin(
   }
 }
 
+let i = 0
+
 export default function VitePluginElementPlusIconsSvgReplace(_options: VitePluginElementPlusIconsSvgReplaceOptions = {}): Plugin {
   const pluginName = 'vite-plugin-element-plus-icons-svg-replace'
 
   return {
-    name: pluginName,
+    name: `${pluginName}:${i++}`,
     enforce: 'post',
     config(config) {
       if (_options.enable === false)
