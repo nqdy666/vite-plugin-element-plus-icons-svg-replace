@@ -71,12 +71,34 @@ export default ${iconName}
 
 export default function VitePluginElementPlusIconsSvgReplace(_options: VitePluginElementPlusIconsSvgReplaceOptions = {}): Plugin {
   const pluginName = 'vite-plugin-element-plus-icons-svg-replace'
+  const PROXY_ID = '\0@element-plus/icons-vue-proxy'
   const replacements: IconReplacement[] = []
   let projectRoot = process.cwd()
 
   return {
     name: pluginName,
     enforce: 'post',
+    config(config) {
+      // Exclude @element-plus/icons-vue from dependency pre-bundling so that
+      // our resolveId proxy module can intercept imports from Element Plus
+      // internal components (e.g. el-select uses ArrowDown from @element-plus/icons-vue).
+      // If pre-bundled, esbuild bypasses the plugin's resolveId hook.
+      if (_options.enable !== false && (_options.replacements?.length || _options.configPath)) {
+        const existing = config.optimizeDeps?.exclude
+        const excludeList = existing
+          ? (Array.isArray(existing) ? existing : [existing])
+          : []
+        if (!excludeList.includes('@element-plus/icons-vue')) {
+          excludeList.push('@element-plus/icons-vue')
+        }
+        return {
+          optimizeDeps: {
+            ...config.optimizeDeps,
+            exclude: excludeList,
+          },
+        }
+      }
+    },
     configResolved(resolved: ResolvedConfig) {
       if (_options.enable === false) {
         return
@@ -109,9 +131,15 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
         }
       }
     },
-    resolveId(id) {
+    resolveId(id, importer) {
       if (_options.enable === false || replacements.length === 0) {
         return null
+      }
+
+      // Intercept @element-plus/icons-vue with a proxy module.
+      // Skip when importing from our own proxy to avoid infinite recursion.
+      if (id === '@element-plus/icons-vue' && importer !== PROXY_ID) {
+        return PROXY_ID
       }
 
       if (id.startsWith('virtual:ep-icons-replace/')) {
@@ -123,6 +151,14 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
     load(id) {
       if (_options.enable === false || replacements.length === 0) {
         return null
+      }
+
+      // Proxy module: re-export replaced icons (take precedence) + original icons
+      if (id === PROXY_ID) {
+        const reExports = replacements
+          .map(r => `export { default as ${r.name} } from 'virtual:ep-icons-replace/${r.name}'`)
+          .join('\n')
+        return `${reExports}\nexport * from '@element-plus/icons-vue'\n`
       }
 
       const resolvedId = id.replace(/^\0/, '')
