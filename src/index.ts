@@ -1,11 +1,18 @@
 // vite-plugin-element-plus-icons-svg-replace
 // Replace Element Plus Icons SVG with custom SVG via per-icon virtual modules
 // Configuration: JSON array format like [{ name: "ArrowRight", d: "..." }, ...]
+//
+// Strategy (inspired by vite-plugin-ant-design-icons-svg-replace):
+// - Inject esbuild/rolldown plugins into optimizeDeps to replace icons during pre-bundling
+// - This avoids the need for optimizeDeps.exclude and works reliably across npm/pnpm/yarn
+// - Vite resolveId/load hooks serve as fallback for dev server non-pre-bundled paths
 
 import type { Plugin, ResolvedConfig } from 'vite'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import process from 'node:process'
+import { normalizePath } from 'vite'
 
 export interface IconReplacement {
   name: string
@@ -17,6 +24,20 @@ export interface VitePluginElementPlusIconsSvgReplaceOptions {
   log?: boolean
   replacements?: IconReplacement[]
   configPath?: string
+}
+
+/**
+ * Detect Vite major version from the consuming project (not the plugin's own devDeps).
+ * Fallback to 5 if detection fails.
+ */
+function getViteMajorVersion(): number {
+  try {
+    const projectRequire = createRequire(path.join(process.cwd(), 'noop.js'))
+    return Number.parseInt(projectRequire('vite/package.json').version.split('.')[0])
+  }
+  catch {
+    return 5
+  }
 }
 
 function loadConfigFromRoot(rootDir: string, configPath?: string): IconReplacement[] {
@@ -69,9 +90,141 @@ export default ${iconName}
 `
 }
 
+/**
+ * Convert camelCase/PascalCase to snake_case.
+ * e.g. ArrowDownBold -> arrow_down_bold
+ */
+function camelToSnake(str: string): string {
+  return str
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/([A-Z])([A-Z][a-z])/g, '$1_$2')
+    .toLowerCase()
+}
+
+/**
+ * Generate replacement icon code compatible with @element-plus/icons-vue's
+ * compiled barrel file format (using _defineComponent, _createElementVNode, etc.)
+ */
+function generateBarrelReplacementCode(iconName: string, d: string): string {
+  const safeD = d.replace(/\\/g, '\\\\').replace(/'/g, '\\\'').replace(/\n/g, ' ')
+  return `var ${iconName}_replacement = /* @__PURE__ */ _defineComponent({
+  name: "${iconName}",
+  setup(__props) {
+    return (_ctx, _cache) => (_openBlock(), _createElementBlock("svg", {
+      xmlns: "http://www.w3.org/2000/svg",
+      viewBox: "0 0 1024 1024"
+    }, [
+      _createElementVNode("path", {
+        fill: "currentColor",
+        d: "${safeD}"
+      })
+    ]));
+  }
+});`
+}
+
+// File path pattern for @element-plus/icons-vue barrel file (ESM entry)
+// e.g. .../node_modules/@element-plus/icons-vue/dist/index.js
+const EP_ICONS_BARREL_RE = /\/@element-plus\/icons-vue\/dist\/index\.js$/
+// ----------------------------------------------------------------
+// Rolldown plugin (Vite 7+)
+// Injected into optimizeDeps.rolldownOptions.plugins to run during
+// dependency pre-bundling. Directly intercepts the @element-plus/icons-vue
+// barrel file and modifies its exports to use our replacement icons.
+// ----------------------------------------------------------------
+function createRolldownReplacePlugin(
+  replacementMap: Map<string, IconReplacement>,
+  log: boolean,
+  pluginName: string,
+) {
+  const replaced = new Set<string>()
+
+  return {
+    name: `${pluginName}:rolldown`,
+    load(id: string) {
+      const normalized = normalizePath(id)
+      if (!EP_ICONS_BARREL_RE.test(normalized))
+        return null
+
+      // Read the original barrel file
+      let content = fs.readFileSync(id, 'utf-8')
+
+      // Prepend replacement component definitions and modify export references
+      for (const [iconName, replacement] of replacementMap) {
+        const snakeName = camelToSnake(iconName)
+        const varName = `${snakeName}_default`
+
+        // Prepend the replacement component definition
+        const replacementCode = generateBarrelReplacementCode(iconName, replacement.d)
+        content = `${replacementCode}\n${content}`
+
+        // Replace the export reference: arrow_down_default as ArrowDown -> ArrowDown_replacement as ArrowDown
+        content = content.replace(
+          new RegExp(`${varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+as\\s+${iconName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g'),
+          `${iconName}_replacement as ${iconName}`,
+        )
+
+        if (log && !replaced.has(iconName)) {
+          replaced.add(iconName)
+          console.warn(`[${pluginName}] (rolldown prebundle) replaced ${iconName}`)
+        }
+      }
+
+      return content
+    },
+  }
+}
+
+// ----------------------------------------------------------------
+// Esbuild plugin (Vite 6)
+// Injected into optimizeDeps.esbuildOptions.plugins. Directly intercepts
+// the @element-plus/icons-vue barrel file and modifies its exports.
+// ----------------------------------------------------------------
+function createEsbuildReplacePlugin(
+  replacementMap: Map<string, IconReplacement>,
+  log: boolean,
+  pluginName: string,
+) {
+  const replaced = new Set<string>()
+
+  return {
+    name: `${pluginName}:esbuild`,
+    setup(build: any) {
+      // Intercept the @element-plus/icons-vue barrel file and modify it
+      build.onLoad(
+        { filter: EP_ICONS_BARREL_RE },
+        async (args: { path: string }) => {
+          let content = await fs.promises.readFile(args.path, 'utf-8')
+
+          for (const [iconName, replacement] of replacementMap) {
+            const snakeName = camelToSnake(iconName)
+            const varName = `${snakeName}_default`
+
+            // Prepend the replacement component definition
+            const replacementCode = generateBarrelReplacementCode(iconName, replacement.d)
+            content = `${replacementCode}\n${content}`
+
+            // Replace the export reference
+            content = content.replace(
+              new RegExp(`${varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+as\\s+${iconName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g'),
+              `${iconName}_replacement as ${iconName}`,
+            )
+
+            if (log && !replaced.has(iconName)) {
+              replaced.add(iconName)
+              console.warn(`[${pluginName}] (esbuild prebundle) replaced ${iconName}`)
+            }
+          }
+
+          return { contents: content, loader: 'js' }
+        },
+      )
+    },
+  }
+}
+
 export default function VitePluginElementPlusIconsSvgReplace(_options: VitePluginElementPlusIconsSvgReplaceOptions = {}): Plugin {
   const pluginName = 'vite-plugin-element-plus-icons-svg-replace'
-  const PROXY_ID = '\0@element-plus/icons-vue-proxy'
   const replacements: IconReplacement[] = []
   let projectRoot = process.cwd()
 
@@ -79,24 +232,68 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
     name: pluginName,
     enforce: 'post',
     config(config) {
-      // Exclude @element-plus/icons-vue from dependency pre-bundling so that
-      // our resolveId proxy module can intercept imports from Element Plus
-      // internal components (e.g. el-select uses ArrowDown from @element-plus/icons-vue).
-      // If pre-bundled, esbuild bypasses the plugin's resolveId hook.
-      if (_options.enable !== false && (_options.replacements?.length || _options.configPath)) {
-        const existing = config.optimizeDeps?.exclude
-        const excludeList = existing
-          ? (Array.isArray(existing) ? existing : [existing])
-          : []
-        if (!excludeList.includes('@element-plus/icons-vue')) {
-          excludeList.push('@element-plus/icons-vue')
+      if (_options.enable === false)
+        return
+
+      // Determine if we have replacements configured (inline or via config file)
+      const hasReplacements = !!(_options.replacements?.length || _options.configPath)
+      if (!hasReplacements)
+        return
+
+      const viteMajorVersion = getViteMajorVersion()
+
+      // Build the replacement map (we need to load config here too since
+      // configResolved hasn't run yet in the config hook)
+      const replacementMap = new Map<string, IconReplacement>()
+      if (_options.replacements) {
+        for (const r of _options.replacements) {
+          replacementMap.set(r.name, r)
         }
+      }
+      if (_options.configPath) {
+        const configReplacements = loadConfigFromRoot(process.cwd(), _options.configPath)
+        for (const r of configReplacements) {
+          replacementMap.set(r.name, r)
+        }
+      }
+
+      if (replacementMap.size === 0)
+        return
+
+      if (_options.log !== false) {
+        console.warn(`[${pluginName}] Detected Vite major version: ${viteMajorVersion}`)
+      }
+
+      if (viteMajorVersion >= 7) {
+        // Vite 7+ uses Rolldown for dependency pre-bundling
+        const existingRolldownPlugins = config.optimizeDeps?.rolldownOptions?.plugins ?? []
         return {
           optimizeDeps: {
             ...config.optimizeDeps,
-            exclude: excludeList,
+            rolldownOptions: {
+              ...(config.optimizeDeps?.rolldownOptions ?? {}),
+              plugins: [
+                ...existingRolldownPlugins,
+                createRolldownReplacePlugin(replacementMap, _options.log !== false, pluginName),
+              ],
+            },
           },
         }
+      }
+
+      // Vite 6 uses esbuild for dependency pre-bundling
+      const existingEsbuildPlugins = config.optimizeDeps?.esbuildOptions?.plugins ?? []
+      return {
+        optimizeDeps: {
+          ...config.optimizeDeps,
+          esbuildOptions: {
+            ...(config.optimizeDeps?.esbuildOptions ?? {}),
+            plugins: [
+              ...existingEsbuildPlugins,
+              createEsbuildReplacePlugin(replacementMap, _options.log !== false, pluginName),
+            ],
+          },
+        },
       }
     },
     configResolved(resolved: ResolvedConfig) {
@@ -131,15 +328,13 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
         }
       }
     },
-    resolveId(id, importer) {
+    /**
+     * Vite dev server resolveId hook.
+     * Handles virtual:ep-icons-replace/* modules for non-pre-bundled paths.
+     */
+    resolveId(id, _importer) {
       if (_options.enable === false || replacements.length === 0) {
         return null
-      }
-
-      // Intercept @element-plus/icons-vue with a proxy module.
-      // Skip when importing from our own proxy to avoid infinite recursion.
-      if (id === '@element-plus/icons-vue' && importer !== PROXY_ID) {
-        return PROXY_ID
       }
 
       if (id.startsWith('virtual:ep-icons-replace/')) {
@@ -148,17 +343,13 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
 
       return null
     },
+    /**
+     * Vite dev server load hook.
+     * Provides virtual replacement icon modules.
+     */
     load(id) {
       if (_options.enable === false || replacements.length === 0) {
         return null
-      }
-
-      // Proxy module: re-export replaced icons (take precedence) + original icons
-      if (id === PROXY_ID) {
-        const reExports = replacements
-          .map(r => `export { default as ${r.name} } from 'virtual:ep-icons-replace/${r.name}'`)
-          .join('\n')
-        return `${reExports}\nexport * from '@element-plus/icons-vue'\n`
       }
 
       const resolvedId = id.replace(/^\0/, '')
@@ -176,6 +367,10 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
 
       return generateReplacementModule(iconName, replacement.d)
     },
+    /**
+     * Transform hook: split user-code imports so replaced icons come from
+     * virtual modules, and non-replaced icons stay on the original barrel import.
+     */
     transform(code, id) {
       if (_options.enable === false || replacements.length === 0) {
         return null

@@ -4,7 +4,4 @@ import VitePluginElementPlusIconsSvgReplace from '../../src/index.ts'
 
 export default defineConfig({
   plugins: [vue(), VitePluginElementPlusIconsSvgReplace({ configPath: 'customEpIcon.json' })],
-  optimizeDeps: {
-    exclude: ['@element-plus/icons-vue'],
-  },
 })
