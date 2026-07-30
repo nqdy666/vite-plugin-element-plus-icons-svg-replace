@@ -103,6 +103,43 @@ function generateBarrelReplacementCode(iconName: string, d: string): string {
 });`
 }
 
+/**
+ * Apply icon replacements to the barrel file content.
+ * Prepend replacement component definitions and modify export references.
+ * Returns the modified content string.
+ */
+function applyReplacements(
+  content: string,
+  replacementMap: Map<string, IconReplacement>,
+  log: boolean,
+  pluginName: string,
+  logPrefix: string,
+  replaced?: Set<string>,
+): string {
+  for (const [iconName, replacement] of replacementMap) {
+    const snakeName = camelToSnake(iconName)
+    const varName = `${snakeName}_default`
+
+    // Prepend the replacement component definition
+    const replacementCode = generateBarrelReplacementCode(iconName, replacement.d)
+    content = `${replacementCode}\n${content}`
+
+    // Replace the export reference: arrow_down_default as ArrowDown -> ArrowDown_replacement as ArrowDown
+    content = content.replace(
+      new RegExp(`${varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+as\\s+${iconName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g'),
+      `${iconName}_replacement as ${iconName}`,
+    )
+
+    if (log) {
+      if (!replaced || !replaced.has(iconName)) {
+        replaced?.add(iconName)
+        console.warn(`[${pluginName}] (${logPrefix}) replaced ${iconName}`)
+      }
+    }
+  }
+  return content
+}
+
 // File path pattern for @element-plus/icons-vue barrel file (ESM entry)
 // e.g. .../node_modules/@element-plus/icons-vue/dist/index.js
 const EP_ICONS_BARREL_RE = /\/@element-plus\/icons-vue\/dist\/index\.js$/
@@ -129,26 +166,8 @@ function createRolldownReplacePlugin(
       // Read the original barrel file
       let content = fs.readFileSync(id, 'utf-8')
 
-      // Prepend replacement component definitions and modify export references
-      for (const [iconName, replacement] of replacementMap) {
-        const snakeName = camelToSnake(iconName)
-        const varName = `${snakeName}_default`
-
-        // Prepend the replacement component definition
-        const replacementCode = generateBarrelReplacementCode(iconName, replacement.d)
-        content = `${replacementCode}\n${content}`
-
-        // Replace the export reference: arrow_down_default as ArrowDown -> ArrowDown_replacement as ArrowDown
-        content = content.replace(
-          new RegExp(`${varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+as\\s+${iconName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g'),
-          `${iconName}_replacement as ${iconName}`,
-        )
-
-        if (log && !replaced.has(iconName)) {
-          replaced.add(iconName)
-          console.warn(`[${pluginName}] (rolldown prebundle) replaced ${iconName}`)
-        }
-      }
+      // Apply all icon replacements
+      content = applyReplacements(content, replacementMap, log, pluginName, 'rolldown prebundle', replaced)
 
       return content
     },
@@ -176,25 +195,8 @@ function createEsbuildReplacePlugin(
         async (args: { path: string }) => {
           let content = await fs.promises.readFile(args.path, 'utf-8')
 
-          for (const [iconName, replacement] of replacementMap) {
-            const snakeName = camelToSnake(iconName)
-            const varName = `${snakeName}_default`
-
-            // Prepend the replacement component definition
-            const replacementCode = generateBarrelReplacementCode(iconName, replacement.d)
-            content = `${replacementCode}\n${content}`
-
-            // Replace the export reference
-            content = content.replace(
-              new RegExp(`${varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+as\\s+${iconName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g'),
-              `${iconName}_replacement as ${iconName}`,
-            )
-
-            if (log && !replaced.has(iconName)) {
-              replaced.add(iconName)
-              console.warn(`[${pluginName}] (esbuild prebundle) replaced ${iconName}`)
-            }
-          }
+          // Apply all icon replacements
+          content = applyReplacements(content, replacementMap, log, pluginName, 'esbuild prebundle', replaced)
 
           return { contents: content, loader: 'js' }
         },
@@ -303,24 +305,8 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
 
       let content = fs.readFileSync(id, 'utf-8')
 
-      for (const [iconName, replacement] of replacementMap) {
-        const snakeName = camelToSnake(iconName)
-        const varName = `${snakeName}_default`
-
-        // Prepend the replacement component definition
-        const replacementCode = generateBarrelReplacementCode(iconName, replacement.d)
-        content = `${replacementCode}\n${content}`
-
-        // Replace the export reference: arrow_down_default as ArrowDown -> ArrowDown_replacement as ArrowDown
-        content = content.replace(
-          new RegExp(`${varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+as\\s+${iconName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g'),
-          `${iconName}_replacement as ${iconName}`,
-        )
-
-        if (_options.log !== false) {
-          console.warn(`[${pluginName}] (load hook) replaced ${iconName}`)
-        }
-      }
+      // Apply all icon replacements
+      content = applyReplacements(content, replacementMap, _options.log !== false, pluginName, 'load hook')
 
       return content
     },
