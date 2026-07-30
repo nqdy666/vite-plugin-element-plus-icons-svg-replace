@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import {
   ArrowDownBold,
   ArrowUp,
@@ -6,11 +7,39 @@ import {
   ArrowDown as MyArrowDown,
   Search,
 } from '@element-plus/icons-vue'
+
+const dropdownValue = ref('')
+const dropdownOptions = [
+  { label: '选项一', value: '1' },
+  { label: '选项二', value: '2' },
+  { label: '选项三', value: '3' },
+]
+
+const handleSelect = (val: string) => {
+  dropdownValue.value = val
+}
 </script>
 
 <template>
   <div style="padding: 20px; font-family: Arial, sans-serif;">
     <h2>EP Icons SVG Replace Demo</h2>
+
+    <p>下拉选择：</p>
+    <el-select
+      v-model="dropdownValue"
+      placeholder="请选择"
+      style="width: 200px; margin-bottom: 20px;"
+      @change="handleSelect"
+    >
+      <el-option
+        v-for="item in dropdownOptions"
+        :key="item.value"
+        :label="item.label"
+        :value="item.value"
+      />
+    </el-select>
+    <p v-if="dropdownValue">当前选中值：{{ dropdownValue }}</p>
+
     <p>ArrowDown icon (replaced):</p>
     <MyArrowDown width="24" />
     <p>ArrowUp icon (replaced):</p>
