@@ -7,7 +7,7 @@
 // - This avoids the need for optimizeDeps.exclude and works reliably across npm/pnpm/yarn
 // - Vite resolveId/load hooks serve as fallback for dev server non-pre-bundled paths
 
-import type { Plugin, ResolvedConfig } from 'vite'
+import type { Plugin } from 'vite'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -68,26 +68,6 @@ function loadConfigFromRoot(rootDir: string, configPath?: string): IconReplaceme
     }
   }
   return replacements
-}
-
-function generateReplacementModule(iconName: string, d: string): string {
-  const safeD = d.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$').replace(/'/g, '\\\'')
-  return `import { defineComponent, h } from 'vue'
-
-const ${iconName} = defineComponent({
-  name: '${iconName}',
-  render() {
-    return h('svg', {
-      xmlns: 'http://www.w3.org/2000/svg',
-      viewBox: '0 0 1024 1024',
-    }, [
-      h('path', { fill: 'currentColor', d: '${safeD}' })
-    ])
-  }
-})
-
-export default ${iconName}
-`
 }
 
 /**
@@ -225,8 +205,8 @@ function createEsbuildReplacePlugin(
 
 export default function VitePluginElementPlusIconsSvgReplace(_options: VitePluginElementPlusIconsSvgReplaceOptions = {}): Plugin {
   const pluginName = 'vite-plugin-element-plus-icons-svg-replace'
-  const replacements: IconReplacement[] = []
-  let projectRoot = process.cwd()
+  // Cached replacement map, populated in config hook, used by load hook
+  let replacementMap = new Map<string, IconReplacement>()
 
   return {
     name: pluginName,
@@ -235,16 +215,12 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
       if (_options.enable === false)
         return
 
-      // Determine if we have replacements configured (inline or via config file)
       const hasReplacements = !!(_options.replacements?.length || _options.configPath)
       if (!hasReplacements)
         return
 
-      const viteMajorVersion = getViteMajorVersion()
-
-      // Build the replacement map (we need to load config here too since
-      // configResolved hasn't run yet in the config hook)
-      const replacementMap = new Map<string, IconReplacement>()
+      // Build the replacement map
+      replacementMap = new Map<string, IconReplacement>()
       if (_options.replacements) {
         for (const r of _options.replacements) {
           replacementMap.set(r.name, r)
@@ -261,11 +237,16 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
         return
 
       if (_options.log !== false) {
+        console.warn(`[${pluginName}] Loaded ${replacementMap.size} icon replacements:`)
+        replacementMap.forEach((_, name) => console.warn(`  - ${name}`))
+      }
+
+      const viteMajorVersion = getViteMajorVersion()
+      if (_options.log !== false) {
         console.warn(`[${pluginName}] Detected Vite major version: ${viteMajorVersion}`)
       }
 
       if (viteMajorVersion >= 7) {
-        // Vite 7+ uses Rolldown for dependency pre-bundling
         const existingRolldownPlugins = config.optimizeDeps?.rolldownOptions?.plugins ?? []
         return {
           optimizeDeps: {
@@ -281,7 +262,6 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
         }
       }
 
-      // Vite 6 uses esbuild for dependency pre-bundling
       const existingEsbuildPlugins = config.optimizeDeps?.esbuildOptions?.plugins ?? []
       return {
         optimizeDeps: {
@@ -296,127 +276,34 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
         },
       }
     },
-    configResolved(resolved: ResolvedConfig) {
-      if (_options.enable === false) {
-        return
-      }
-
-      projectRoot = resolved.root || process.cwd()
-
-      // Clear to avoid duplicates when configResolved fires multiple times
-      replacements.length = 0
-
-      // Merge inline replacements from options
-      if (_options.replacements?.length) {
-        replacements.push(..._options.replacements)
-      }
-
-      // Load replacements from config file
-      const configPath = _options.configPath
-      if (configPath) {
-        const loaded = loadConfigFromRoot(projectRoot, configPath)
-        replacements.push(...loaded)
-      }
-
-      if (_options.log !== false) {
-        if (replacements.length > 0) {
-          console.warn(`[${pluginName}] Loaded ${replacements.length} icon replacements:`)
-          replacements.forEach(r => console.warn(`  - ${r.name}`))
-        }
-        else {
-          console.warn(`[${pluginName}] No icon replacements provided. Plugin will do nothing.`)
-        }
-      }
-    },
     /**
-     * Vite dev server resolveId hook.
-     * Handles virtual:ep-icons-replace/* modules for non-pre-bundled paths.
+     * Fallback load hook: directly intercepts the @element-plus/icons-vue
+     * barrel file for non-pre-bundled paths (e.g. when optimizeDeps.exclude
+     * is used, or during certain dev server scenarios).
      */
-    resolveId(id, _importer) {
-      if (_options.enable === false || replacements.length === 0) {
+    load(id: string) {
+      if (_options.enable === false || replacementMap.size === 0)
         return null
-      }
 
-      if (id.startsWith('virtual:ep-icons-replace/')) {
-        return `\0${id}`
-      }
-
-      return null
-    },
-    /**
-     * Vite dev server load hook.
-     * Provides virtual replacement icon modules.
-     */
-    load(id) {
-      if (_options.enable === false || replacements.length === 0) {
+      const normalized = normalizePath(id)
+      if (!EP_ICONS_BARREL_RE.test(normalized))
         return null
+
+      let content = fs.readFileSync(id, 'utf-8')
+
+      for (const [iconName, replacement] of replacementMap) {
+        const snakeName = camelToSnake(iconName)
+        const varName = `${snakeName}_default`
+
+        content = `${generateBarrelReplacementCode(iconName, replacement.d)}\n${content}`
+
+        content = content.replace(
+          new RegExp(`${varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+as\\s+${iconName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g'),
+          `${iconName}_replacement as ${iconName}`,
+        )
       }
 
-      const resolvedId = id.replace(/^\0/, '')
-      if (!resolvedId.startsWith('virtual:ep-icons-replace/')) {
-        return null
-      }
-
-      const iconName = path.basename(resolvedId)
-      const replacement = replacements.find(r => r.name === iconName)
-
-      if (!replacement) {
-        console.warn(`[${pluginName}] No replacement found for icon "${iconName}", skipping.`)
-        return `export {}`
-      }
-
-      return generateReplacementModule(iconName, replacement.d)
-    },
-    /**
-     * Transform hook: split user-code imports so replaced icons come from
-     * virtual modules, and non-replaced icons stay on the original barrel import.
-     */
-    transform(code, id) {
-      if (_options.enable === false || replacements.length === 0) {
-        return null
-      }
-
-      if (!id || !code.includes('@element-plus/icons-vue')) {
-        return null
-      }
-
-      const replacementNames = replacements.map(r => r.name)
-      const importRegex = /import\s+\{([^}]+)\}\s+from\s+['"]@element-plus\/icons-vue['"]/g
-
-      let newCode = code
-      const matches = code.match(importRegex)
-      if (!matches) {
-        return null
-      }
-
-      newCode = newCode.replace(importRegex, (match, group1) => {
-        const rawNames = (group1 || '').split(',').map(s => s.trim()).filter(Boolean)
-        const parsed = rawNames.map((n) => {
-          const parts = n.split(/\s+as\s+/)
-          return { baseName: parts[0].trim(), alias: (parts[1] || parts[0]).trim() }
-        })
-        const replaced = parsed.filter(p => replacementNames.includes(p.baseName))
-        const remaining = parsed.filter(p => !replacementNames.includes(p.baseName))
-
-        const lines: string[] = []
-        if (remaining.length > 0) {
-          const remainingStr = remaining
-            .map(p => p.baseName === p.alias ? p.baseName : `${p.baseName} as ${p.alias}`)
-            .join(', ')
-          lines.push(`import { ${remainingStr} } from '@element-plus/icons-vue'`)
-        }
-        replaced.forEach((p) => {
-          lines.push(`import ${p.alias} from 'virtual:ep-icons-replace/${p.baseName}'`)
-        })
-
-        return lines.join('\n')
-      })
-
-      if (newCode === code) {
-        return null
-      }
-
-      return { code: newCode }
+      return content
     },
   }
 }
