@@ -26,14 +26,16 @@ function loadConfigFromRoot(rootDir: string, configPath?: string): IconReplaceme
     if (fs.existsSync(abs)) {
       try {
         const raw = fs.readFileSync(abs, 'utf8')
-        const json = JSON.parse(raw)
+        const json: unknown = JSON.parse(raw)
         if (Array.isArray(json)) {
-          json.forEach((item: unknown) => {
-            const it = item as { name?: string, d?: string }
-            if (it?.name && it?.d) {
-              replacements.push({ name: it.name, d: it.d })
+          for (const item of json) {
+            if (typeof item === 'object' && item !== null && 'name' in item && 'd' in item) {
+              const { name, d } = item as Record<string, unknown>
+              if (typeof name === 'string' && typeof d === 'string') {
+                replacements.push({ name, d })
+              }
             }
-          })
+          }
         }
         else {
           throw new TypeError('Config must be an array of { name, d } objects')
@@ -48,7 +50,7 @@ function loadConfigFromRoot(rootDir: string, configPath?: string): IconReplaceme
 }
 
 function generateReplacementModule(iconName: string, d: string): string {
-  const safeD = d.replace(/'/g, '\\\'')
+  const safeD = d.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$').replace(/'/g, "\\'")
   return `import { defineComponent, h } from 'vue'
 
 const ${iconName} = defineComponent({
@@ -76,54 +78,74 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
     name: pluginName,
     enforce: 'pre',
     configResolved(resolved: ResolvedConfig) {
+      if (_options.enable === false) {
+        return
+      }
+
       projectRoot = resolved.root || process.cwd()
 
+      // Clear to avoid duplicates when configResolved fires multiple times
+      replacements.length = 0
+
+      // Merge inline replacements from options
+      if (_options.replacements?.length) {
+        replacements.push(..._options.replacements)
+      }
+
+      // Load replacements from config file
       const configPath = _options.configPath
       if (configPath) {
         const loaded = loadConfigFromRoot(projectRoot, configPath)
         replacements.push(...loaded)
+      }
 
-        if (_options.log !== false && replacements.length > 0) {
+      if (_options.log !== false) {
+        if (replacements.length > 0) {
           console.warn(`[${pluginName}] Loaded ${replacements.length} icon replacements:`)
           replacements.forEach(r => console.warn(`  - ${r.name}`))
         }
-      }
-
-      if (replacements.length === 0 && _options.log !== false) {
-        console.warn(`[${pluginName}] No icon replacements provided. Plugin will do nothing.`)
+        else {
+          console.warn(`[${pluginName}] No icon replacements provided. Plugin will do nothing.`)
+        }
       }
     },
     resolveId(id) {
+      if (_options.enable === false || replacements.length === 0) {
+        return null
+      }
+
       if (id.startsWith('virtual:ep-icons-replace/')) {
-        return id
+        return '\0' + id
       }
 
       return null
     },
     load(id) {
-      if (!id.startsWith('virtual:ep-icons-replace/')) {
+      if (_options.enable === false || replacements.length === 0) {
         return null
       }
 
-      const iconName = path.basename(id)
+      const resolvedId = id.replace(/^\0/, '')
+      if (!resolvedId.startsWith('virtual:ep-icons-replace/')) {
+        return null
+      }
+
+      const iconName = path.basename(resolvedId)
       const replacement = replacements.find(r => r.name === iconName)
 
       if (!replacement) {
+        console.warn(`[${pluginName}] No replacement found for icon "${iconName}", skipping.`)
         return `export {}`
       }
 
       return generateReplacementModule(iconName, replacement.d)
     },
     transform(code, id) {
-      if (!code || !id) {
+      if (_options.enable === false || replacements.length === 0) {
         return null
       }
 
-      if (!code.includes('@element-plus/icons-vue')) {
-        return null
-      }
-
-      if (replacements.length === 0) {
+      if (!id || !code.includes('@element-plus/icons-vue')) {
         return null
       }
 
@@ -152,7 +174,7 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
         return lines.join('\n')
       })
 
-      return { code: newCode, map: null }
+      return { code: newCode }
     },
   }
 }
