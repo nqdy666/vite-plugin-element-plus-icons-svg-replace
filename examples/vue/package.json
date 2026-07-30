@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "dev": "vite",
+    "preview": "vite preview",
     "build": "vite build"
   },
   "dependencies": {
