@@ -260,7 +260,6 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
         const existingRolldownPlugins = config.optimizeDeps?.rolldownOptions?.plugins ?? []
         return {
           optimizeDeps: {
-            ...config.optimizeDeps,
             rolldownOptions: {
               ...(config.optimizeDeps?.rolldownOptions ?? {}),
               plugins: [
