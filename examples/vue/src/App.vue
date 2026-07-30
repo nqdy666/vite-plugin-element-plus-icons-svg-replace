@@ -1,12 +1,18 @@
 <script setup lang="ts">
-import { ArrowDown, ArrowDownBold, ArrowUp, ArrowUpBold, Search } from '@element-plus/icons-vue'
+import {
+  ArrowDownBold,
+  ArrowUp,
+  ArrowUpBold,
+  ArrowDown as MyArrowDown,
+  Search,
+} from '@element-plus/icons-vue'
 </script>
 
 <template>
   <div style="padding: 20px; font-family: Arial, sans-serif;">
     <h2>EP Icons SVG Replace Demo</h2>
     <p>ArrowDown icon (replaced):</p>
-    <ArrowDown width="24" />
+    <MyArrowDown width="24" />
     <p>ArrowUp icon (replaced):</p>
     <ArrowUp width="24" />
     <p>ArrowDownBold icon (replaced):</p>
