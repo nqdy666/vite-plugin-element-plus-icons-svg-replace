@@ -205,8 +205,6 @@ function createEsbuildReplacePlugin(
 
 export default function VitePluginElementPlusIconsSvgReplace(_options: VitePluginElementPlusIconsSvgReplaceOptions = {}): Plugin {
   const pluginName = 'vite-plugin-element-plus-icons-svg-replace'
-  // Cached replacement map, populated in config hook, used by load hook
-  let replacementMap = new Map<string, IconReplacement>()
 
   return {
     name: pluginName,
@@ -220,7 +218,7 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
         return
 
       // Build the replacement map
-      replacementMap = new Map<string, IconReplacement>()
+      const replacementMap = new Map<string, IconReplacement>()
       if (_options.replacements) {
         for (const r of _options.replacements) {
           replacementMap.set(r.name, r)
@@ -275,35 +273,6 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
           },
         },
       }
-    },
-    /**
-     * Fallback load hook: directly intercepts the @element-plus/icons-vue
-     * barrel file for non-pre-bundled paths (e.g. when optimizeDeps.exclude
-     * is used, or during certain dev server scenarios).
-     */
-    load(id: string) {
-      if (_options.enable === false || replacementMap.size === 0)
-        return null
-
-      const normalized = normalizePath(id)
-      if (!EP_ICONS_BARREL_RE.test(normalized))
-        return null
-
-      let content = fs.readFileSync(id, 'utf-8')
-
-      for (const [iconName, replacement] of replacementMap) {
-        const snakeName = camelToSnake(iconName)
-        const varName = `${snakeName}_default`
-
-        content = `${generateBarrelReplacementCode(iconName, replacement.d)}\n${content}`
-
-        content = content.replace(
-          new RegExp(`${varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+as\\s+${iconName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g'),
-          `${iconName}_replacement as ${iconName}`,
-        )
-      }
-
-      return content
     },
   }
 }
