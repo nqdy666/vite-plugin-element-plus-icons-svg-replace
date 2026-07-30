@@ -1,7 +1,7 @@
 {
   "name": "vite-plugin-element-plus-icons-svg-replace",
   "type": "module",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Replace Element Plus Icons SVG with custom SVG",
   "author": "nianqin",
   "license": "MIT",
