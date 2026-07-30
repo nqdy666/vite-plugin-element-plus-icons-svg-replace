@@ -76,7 +76,7 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
 
   return {
     name: pluginName,
-    enforce: 'pre',
+    enforce: 'post',
     configResolved(resolved: ResolvedConfig) {
       if (_options.enable === false) {
         return
