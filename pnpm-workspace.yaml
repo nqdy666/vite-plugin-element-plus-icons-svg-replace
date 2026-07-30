@@ -1,0 +1,7 @@
+packages:
+  - '.'
+  - 'examples/*'
+allowBuilds:
+  esbuild: false
+  unrs-resolver: false
+npm
