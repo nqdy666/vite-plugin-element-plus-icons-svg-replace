@@ -50,7 +50,7 @@ function loadConfigFromRoot(rootDir: string, configPath?: string): IconReplaceme
 }
 
 function generateReplacementModule(iconName: string, d: string): string {
-  const safeD = d.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$').replace(/'/g, "\\'")
+  const safeD = d.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$').replace(/'/g, '\\\'')
   return `import { defineComponent, h } from 'vue'
 
 const ${iconName} = defineComponent({
@@ -115,7 +115,7 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
       }
 
       if (id.startsWith('virtual:ep-icons-replace/')) {
-        return '\0' + id
+        return `\0${id}`
       }
 
       return null
