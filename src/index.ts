@@ -208,38 +208,46 @@ let i = 0
 export default function VitePluginElementPlusIconsSvgReplace(_options: VitePluginElementPlusIconsSvgReplaceOptions = {}): Plugin {
   const pluginName = 'vite-plugin-element-plus-icons-svg-replace'
 
+  // Build replacement map early so it's available to both config and load hooks
+  const replacementMap = new Map<string, IconReplacement>()
+  let initialized = false
+
+  function initReplacements(): void {
+    if (initialized)
+      return
+    initialized = true
+    const hasReplacements = !!(_options.replacements?.length || _options.configPath)
+    if (!hasReplacements)
+      return
+
+    if (_options.replacements) {
+      for (const r of _options.replacements) {
+        replacementMap.set(r.name, r)
+      }
+    }
+    if (_options.configPath) {
+      const configReplacements = loadConfigFromRoot(process.cwd(), _options.configPath)
+      for (const r of configReplacements) {
+        replacementMap.set(r.name, r)
+      }
+    }
+
+    if (replacementMap.size > 0 && _options.log !== false) {
+      console.warn(`[${pluginName}] Loaded ${replacementMap.size} icon replacements:`)
+      replacementMap.forEach((_, name) => console.warn(`  - ${name}`))
+    }
+  }
+
   return {
     name: `${pluginName}:${i++}`,
-    enforce: 'post',
+    enforce: 'pre',
     config(config) {
       if (_options.enable === false)
         return
 
-      const hasReplacements = !!(_options.replacements?.length || _options.configPath)
-      if (!hasReplacements)
-        return
-
-      // Build the replacement map
-      const replacementMap = new Map<string, IconReplacement>()
-      if (_options.replacements) {
-        for (const r of _options.replacements) {
-          replacementMap.set(r.name, r)
-        }
-      }
-      if (_options.configPath) {
-        const configReplacements = loadConfigFromRoot(process.cwd(), _options.configPath)
-        for (const r of configReplacements) {
-          replacementMap.set(r.name, r)
-        }
-      }
-
+      initReplacements()
       if (replacementMap.size === 0)
         return
-
-      if (_options.log !== false) {
-        console.warn(`[${pluginName}] Loaded ${replacementMap.size} icon replacements:`)
-        replacementMap.forEach((_, name) => console.warn(`  - ${name}`))
-      }
 
       const viteMajorVersion = getViteMajorVersion()
       if (_options.log !== false) {
@@ -275,6 +283,46 @@ export default function VitePluginElementPlusIconsSvgReplace(_options: VitePlugi
           },
         },
       }
+    },
+    /**
+     * load hook: intercepts the @element-plus/icons-vue barrel file during build.
+     * In dev mode, optimizeDeps handles the replacement via the esbuild/rolldown
+     * plugin injected above. During build, Rollup bundles directly and this load
+     * hook is the primary interception point.
+     */
+    load(id) {
+      if (_options.enable === false)
+        return null
+      initReplacements()
+      if (replacementMap.size === 0)
+        return null
+
+      const normalized = normalizePath(id)
+      if (!EP_ICONS_BARREL_RE.test(normalized))
+        return null
+
+      let content = fs.readFileSync(id, 'utf-8')
+
+      for (const [iconName, replacement] of replacementMap) {
+        const snakeName = camelToSnake(iconName)
+        const varName = `${snakeName}_default`
+
+        // Prepend the replacement component definition
+        const replacementCode = generateBarrelReplacementCode(iconName, replacement.d)
+        content = `${replacementCode}\n${content}`
+
+        // Replace the export reference: arrow_down_default as ArrowDown -> ArrowDown_replacement as ArrowDown
+        content = content.replace(
+          new RegExp(`${varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+as\\s+${iconName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g'),
+          `${iconName}_replacement as ${iconName}`,
+        )
+
+        if (_options.log !== false) {
+          console.warn(`[${pluginName}] (load hook) replaced ${iconName}`)
+        }
+      }
+
+      return content
     },
   }
 }
